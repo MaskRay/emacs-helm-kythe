@@ -42,23 +42,15 @@
 ;; of mtl if the packages have been unpacked at /tmp/ or some
 ;; directory listed in helm-kythe-file-search-paths.
 ;;
-;; For eldoc:
-;; (setq-local eldoc-documentation-function #'helm-kythe-eldoc)
-;;
-;; When the point is at a reference, the `snippet' of its definition will be displayed in minibuffer.
+;; If eldoc-mode is enabled, when the point is at a reference, the `snippet' of its definition will be displayed in minibuffer.
 
 ;;; Code:
 
-(require 'cl)
+(require 'cl-lib)
 (require 'dash)
 (require 'easymenu)
 (require 'helm)
 (require 's)
-
-(defcustom helm-kythe-auto-update nil
-  "*If non-nil, tag files are updated whenever a file is saved."
-  :group 'helm-kythe
-  :type 'boolean)
 
 (defcustom helm-kythe-highlight-candidate t
   "Highlight candidate or not"
@@ -167,7 +159,7 @@
             (recenter)
           (let ((p (point)))
             (unless (catch 'loop
-                      (loop for (prop . get-prop) in
+                      (cl-loop for (prop . get-prop) in
                             '((helm-kythe-definition . helm-kythe--definition-at-point)
                               (helm-kythe-reference . helm-kythe--reference-at-point)) do
                               (beginning-of-buffer)
@@ -232,7 +224,7 @@
                     (f (concat (file-name-directory project-root) path))
                     (_ (file-exists-p f)))
              (funcall open-func f)
-           (loop for search-path in helm-kythe-file-search-paths do
+           (cl-loop for search-path in helm-kythe-file-search-paths do
                  (-if-let* ((f (concat search-path path))
                             (_ (file-exists-p f)))
                      (funcall open-func f)))))))
@@ -350,20 +342,21 @@
 
 (defun helm-kythe-apply-decorations ()
   (interactive)
-  (loop for prop in '(helm-kythe-definition helm-kythe-reference) do
-        (put-text-property (point-min) (point-max) prop nil))
-  (helm-kythe--set-mode-line 'helm-kythe-inactive)
-  (when-let (filename (buffer-file-name))
-    (if (eq major-mode 'haskell-mode)
-        (-when-let* [(project-root (helm-kythe--haskell-find-project-root))
-                     (filename (buffer-file-name))]
-          (condition-case ex
-              (helm-kythe-decorations (concat (file-name-nondirectory project-root) "/" (file-relative-name filename project-root)))
-            ('helm-kythe-error (error "helm-kythe-apply-decorations: %s" (cdr ex)))))
-      (loop for search-path in helm-kythe-file-search-paths do
-            (when-let (path (file-relative-name filename search-path))
-              (helm-kythe-decorations path)
-              (return))))))
+  (with-silent-modifications
+    (cl-loop for prop in '(helm-kythe-definition helm-kythe-reference) do
+          (put-text-property (point-min) (point-max) prop nil))
+    (helm-kythe--set-mode-line 'helm-kythe-inactive)
+    (when-let (filename (buffer-file-name))
+      (if (eq major-mode 'haskell-mode)
+          (-when-let* [(project-root (helm-kythe--haskell-find-project-root))
+                       (filename (buffer-file-name))]
+            (condition-case ex
+                (helm-kythe-decorations (concat (file-name-nondirectory project-root) "/" (file-relative-name filename project-root)))
+              ('helm-kythe-error (error "helm-kythe-apply-decorations: %s" (cdr ex)))))
+        (cl-loop for search-path in helm-kythe-file-search-paths do
+              (when-let (path (file-relative-name filename search-path))
+                (helm-kythe-decorations path)
+                (return)))))))
 
 ;; .cross_references | values[].definition[].anchor
 (defun helm-kythe-get-definitions (ticket)
@@ -433,8 +426,10 @@
   (helm-kythe--common '(helm-source-helm-kythe-references-prompt)))
 
 (defun helm-kythe-dwim ()
-  ;; TODO
-  )
+  (interactive)
+  (if (helm-kythe--definition-at-point)
+      (helm-kythe-find-references)
+    (helm-kythe-find-definitions)))
 
 (defun helm-kythe-imenu ()
   (interactive)
@@ -445,10 +440,6 @@
   (unless (get-buffer helm-kythe--buffer)
     (error "Error: helm-kythe buffer does not exist."))
   (helm-resume helm-kythe--buffer))
-
-(defun helm-kythe-update-index ()
-  ;; TODO
-  )
 
 (defvar helm-kythe-mode-map (make-sparse-keymap))
 (defvar-local helm-kythe-mode-line (helm-kythe--propertize-mode-line 'helm-kythe-inactive))
@@ -461,12 +452,13 @@
   :lighter helm-kythe-mode-line
   :global nil
   :keymap helm-kythe-mode-map
-  (if helm-kythe-mode
-      (progn (when helm-kythe-auto-update
-               (add-hook 'after-save-hook 'helm-kythe-update-index nil t))
-             (helm-kythe-apply-decorations))
-    (when helm-kythe-auto-update
-      (remove-hook 'after-save-hook 'helm-kythe-update-index t))))
+  (cond
+   (helm-kythe-mode
+    (add-function :before-until (local 'eldoc-documentation-function) #'helm-kythe-eldoc-function)
+    (helm-kythe-apply-decorations))
+   (t
+    (remove-function (local 'eldoc-documentation-function)
+                     #'helm-kythe-eldoc-function))))
 
 (when helm-kythe-suggested-key-mapping
   (let ((command-table '(("a" . helm-kythe-apply-decorations)
@@ -479,7 +471,7 @@
         (key-func (if (string-prefix-p "\\" helm-kythe-prefix-key)
                       #'concat
                     (lambda (prefix key) (kbd (concat prefix " " key))))))
-    (loop for (key . command) in command-table
+    (cl-loop for (key . command) in command-table
           do
           (define-key helm-kythe-mode-map (funcall key-func helm-kythe-prefix-key key) command))
     ))
