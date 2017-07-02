@@ -60,13 +60,13 @@
   :type 'boolean)
 
 (defcustom helm-kythe-highlight-candidate t
-  "Highlight candidate or not"
+  "Highlight candidate or not."
   :group 'helm-kythe
   :type 'boolean)
 
 ;; TODO 0.0.26 /opt/kythe/tools/http_server --listen localhost:8080 does not listen on ::1
 (defcustom helm-kythe-http-server-url "http://127.0.0.1:8080"
-  "kythe/tools/http_server --listen"
+  "HTTP URL served by `kythe/tools/http_server --listen' through which ‘helm-kythe-apply-decorations’ fetch cross references information."
   :group 'helm-kythe
   :type 'string)
 
@@ -203,6 +203,7 @@
   (-some->> (get-text-property (point) 'helm-kythe-reference) (alist-get 'target_ticket)))
 
 (defun helm-kythe--anchor-keep-one-per-line (anchors)
+  "If there are more than one Kythe anchors in one line, keep the first and discard the rest."
   (let (ret path1 line1)
     (cl-loop for anchor in anchors do
              (let ((path (helm-kythe--path-from-ticket (alist-get 'parent anchor)))
@@ -214,6 +215,7 @@
     (nreverse ret)))
 
 (defun helm-kythe--anchor-to-candidate (anchor)
+  "Convert a Kythe anchor to Helm candidates. The first field is an invisible field containing its ticket."
   (format "%s\0%s:%d:%d:%s"
           (alist-get 'ticket anchor)
           (helm-kythe--path-from-ticket (alist-get 'parent anchor))
@@ -239,6 +241,7 @@
       candidate))
 
 (defun helm-kythe--char-offsets (object start-key end-key)
+  "Convert Kythe byte offsets to Emacs positions."
   (cons (byte-to-position (1+ (alist-get 'byte_offset (alist-get start-key object))))
         (byte-to-position (1+ (alist-get 'byte_offset (alist-get end-key object))))))
 
@@ -262,6 +265,7 @@
                      (funcall open-func f)))))))
 
 (defun helm-kythe--fontify-haskell (line)
+  "Fontify a line that will be displayed in minibuffer"
   (with-temp-buffer
     (when (fboundp 'haskell-mode)
       (let ((flycheck-checkers nil)
@@ -272,6 +276,7 @@
       (buffer-string))))
 
 (defun helm-kythe--haskell-find-project-root ()
+  "Find the Haskell project root."
   (require 'inf-haskell)  ;; for inferior-haskell-find-project-root
   (let ((p (inferior-haskell-find-project-root (current-buffer))))
     (while (not (string-match-p ".-[0-9]" (file-name-nondirectory p)))
@@ -282,6 +287,7 @@
   (when-let (i (string-match "path=\\([^#]+\\)" ticket)) (match-string 1 ticket)))
 
 (defun helm-kythe--ticket-equal? (ticket0 ticket1)
+  "Return t if two Kythe tickets are identical."
   (and ticket1 (string= (replace-regexp-in-string "%3A" "/" ticket0 t) (replace-regexp-in-string "%3A" "/" ticket1 t))))
 
 (defun helm-kythe-post (path data)
@@ -289,13 +295,17 @@
         (url-request-extra-headers '(("content-type" . "application/json")))
         (url-request-data (json-encode data)))
     (with-current-buffer (url-retrieve-synchronously (concat helm-kythe-http-server-url path) t)
-      (goto-char (point-min))
-      (re-search-forward "\n\n")
-      (buffer-string)
       (condition-case nil
-          (save-excursion (json-read))
+          (save-excursion
+            (goto-char (point-min))
+            (re-search-forward "\n\n")
+            (buffer-string)
+            (json-read))
         ('json-error
-         (signal 'helm-kythe-error (concat "Kythe http_server error: " (string-trim (buffer-substring-no-properties (point) (point-max))))))))))
+         (signal 'helm-kythe-error (concat "Kythe http_server error: " (string-trim (buffer-substring-no-properties (point) (point-max))))))
+        ('error
+         (signal 'helm-kythe-error (concat "Kythe http_server error")))
+        ))))
 
 (defun helm-kythe--propertize-mode-line (face)
   (propertize " Kythe" 'face face))
@@ -475,6 +485,7 @@
   (helm-kythe--common '(helm-kythe-source-imenu)))
 
 (defun helm-kythe-resume ()
+  "Resurrect previously invoked `helm-kythe` command."
   (interactive)
   (unless (get-buffer helm-kythe--buffer)
     (error "Error: helm-kythe buffer does not exist."))
