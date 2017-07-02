@@ -299,8 +299,7 @@
           (save-excursion
             (goto-char (point-min))
             (re-search-forward "\n\n")
-            (buffer-string)
-            (json-read))
+            (json-read-from-string (decode-coding-string (buffer-substring-no-properties (point) (point-max)) 'utf-8)))
         ('json-error
          (signal 'helm-kythe-error (concat "Kythe http_server error: " (string-trim (buffer-substring-no-properties (point) (point-max))))))
         ('error
