@@ -30,13 +30,15 @@
 
 `helm-kythe.el` provides suggested key mapping if `helm-kythe-suggested-key-mapping` is non-nil. The prefix key is `helm-kythe-prefix-key (default: C-c k)` .
 
-|Key         |Command                          |
-|:-----------|:--------------------------------|
-|Prefix `a`  | `helm-kythe-apply-decorations`  |
-|Prefix `d`  | `helm-kythe-find-definitions`   |
-|Prefix `i`  | `helm-kythe-imenu`              |
-|Prefix `l`  | `helm-kythe-resume`             |
-|Prefix `r`  | `helm-kythe-find-references`    |
+|Key          |Command                                      |
+|:------------|:--------------------------------------------|
+|Prefix `a`   | `helm-kythe-apply-decorations`              |
+|Prefix `d`   | `helm-kythe-find-definitions`               |
+|Prefix `i`   | `helm-kythe-imenu`                          |
+|Prefix `l`   | `helm-kythe-resume`                         |
+|Prefix `r`   | `helm-kythe-find-references`                |
+|Prefix `C-d` | `helm-kythe-find-definitions-other-window`  |
+|Prefix `C-r` | `helm-kythe-find-references-other-window` |
 
 ## Sample configuration
 

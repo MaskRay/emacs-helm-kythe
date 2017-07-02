@@ -164,8 +164,7 @@
           (filename (match-string-no-properties 2 candidate))
           (line (string-to-number (match-string-no-properties 3 candidate)))
           (column (string-to-number (match-string-no-properties 4 candidate))))
-      (when (helm-kythe--find-file
-             (if helm-kythe--use-otherwin #'find-file-other-window #'find-file) filename)
+      (when (helm-kythe--find-file filename)
         (goto-char (point-min))
         (forward-line (1- line))
         (forward-char column)
@@ -250,19 +249,20 @@
         (helm-execute-action-at-once-if-one t))
     (helm :sources srcs :buffer helm-kythe--buffer)))
 
-(defun helm-kythe--find-file (open-func path)
-  (cond ((file-name-absolute-p path) (funcall open-func path))
-        ((string-suffix-p path (buffer-file-name)) t)
-        (t
-         (-if-let* ((_ (eq major-mode 'haskell-mode))
-                    (project-root (helm-kythe--haskell-find-project-root))
-                    (f (concat (file-name-directory project-root) path))
-                    (_ (file-exists-p f)))
-             (funcall open-func f)
-           (cl-loop for search-path in helm-kythe-file-search-paths do
-                 (-if-let* ((f (concat search-path path))
-                            (_ (file-exists-p f)))
-                     (funcall open-func f)))))))
+(defun helm-kythe--find-file (path)
+  (-let [open-func (if helm-kythe--use-otherwin #'find-file-other-window #'find-file)]
+    (cond ((file-name-absolute-p path) (funcall open-func path))
+          ((string-suffix-p path (buffer-file-name)) (funcall open-func buffer-file-name))
+          (t
+           (-if-let* ((_ (eq major-mode 'haskell-mode))
+                      (project-root (helm-kythe--haskell-find-project-root))
+                      (f (concat (file-name-directory project-root) path))
+                      (_ (file-exists-p f)))
+               (funcall open-func f)
+             (cl-loop for search-path in helm-kythe-file-search-paths do
+                      (-if-let* ((f (concat search-path path))
+                                 (_ (file-exists-p f)))
+                          (funcall open-func f))))))))
 
 (defun helm-kythe--fontify-haskell (line)
   "Fontify a line that will be displayed in minibuffer"
@@ -461,6 +461,11 @@
   (interactive)
   (helm-kythe--common '(helm-kythe-source-definitions)))
 
+(defun helm-kythe-find-definitions-other-window ()
+  (interactive)
+  (-let [helm-kythe--use-otherwin t]
+    (helm-kythe--common '(helm-kythe-source-definitions))))
+
 (defun helm-kythe-find-definitions-prompt ()
   (interactive)
   (helm-kythe--common '(helm-kythe-source-definitions-prompt)))
@@ -468,6 +473,11 @@
 (defun helm-kythe-find-references ()
   (interactive)
   (helm-kythe--common '(helm-kythe-source-references)))
+
+(defun helm-kythe-find-references-other-window ()
+  (interactive)
+  (-let [helm-kythe--use-otherwin t]
+    (helm-kythe--common '(helm-kythe-source-references))))
 
 (defun helm-kythe-find-references-prompt ()
   (interactive)
@@ -512,9 +522,11 @@
 (when helm-kythe-suggested-key-mapping
   (let ((command-table '(("a" . helm-kythe-apply-decorations)
                          ("d" . helm-kythe-find-definitions)
+                         ("C-d" . helm-kythe-find-definitions-other-window)
                          ;; ("D" . helm-kythe-find-definitions-prompt)
                          ("i" . helm-kythe-imenu)
                          ("r" . helm-kythe-find-references)
+                         ("C-r" . helm-kythe-find-references-other-window)
                          ;; ("R" . helm-kythe-find-references-prompt)
                          ("l" . helm-kythe-resume)))
         (key-func (if (string-prefix-p "\\" helm-kythe-prefix-key)
