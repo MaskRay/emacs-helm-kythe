@@ -5,7 +5,7 @@
 ;; Author: Fangrui Song <i@maskray.me>
 ;; Package-Version: 20170629.1
 ;; Version: 0.0.1
-;; Package-Requires: ((emacs "24.4") (dash "2.13.0") (helm "2.0") (s "1.10.0"))
+;; Package-Requires: ((emacs "24.4") (dash "2.13.0") (helm "2.0"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -50,7 +50,12 @@
 (require 'dash)
 (require 'easymenu)
 (require 'helm)
-(require 's)
+(require 'subr-x)
+
+(defcustom helm-kythe-display-one-anchor-per-line t
+  "If non-nil, for cross refernces, display at most one anchor per line."
+  :group 'helm-kythe
+  :type 'boolean)
 
 (defcustom helm-kythe-highlight-candidate t
   "Highlight candidate or not"
@@ -78,6 +83,11 @@
   :group 'helm-kythe
   :type '(list string))
 
+(defcustom helm-kythe-recenter nil
+  "If non-nil, (recenter) after a jump."
+  :group 'helm-kythe
+  :type 'boolean)
+
 (defface helm-kythe-active
   '()
   "Face for mode line when Kythe is active.")
@@ -97,6 +107,8 @@
 (defface helm-kythe-match
   '((t :inherit helm-match))
   "Face for word matched against tagname")
+
+(defvar helm-kythe--eldoc-cache (make-hash-table :test 'equal))
 
 (defvar helm-kythe--find-file-action
   (helm-make-actions
@@ -156,7 +168,7 @@
         (forward-char column)
         ;; If the target has been modified, enumerate all decorations and find the ticket.
         (if (helm-kythe--ticket-equal? ticket (or (helm-kythe--definition-at-point) (helm-kythe--reference-at-point)))
-            (recenter)
+            (when helm-kythe-recenter (recenter))
           (let ((p (point)))
             (unless (catch 'loop
                       (cl-loop for (prop . get-prop) in
@@ -169,7 +181,7 @@
                                        (or (next-single-property-change (point) prop)
                                            (point-max))))
                                   (when (helm-kythe--ticket-equal? ticket ticket1)
-                                    (recenter)
+                                    (when helm-kythe-recenter (recenter))
                                     (throw 'loop t))
                                   (goto-char next-change)))))
               (goto-char p))))))))
@@ -187,6 +199,17 @@
 (defun helm-kythe--reference-target-at-point ()
   (-some->> (get-text-property (point) 'helm-kythe-reference) (alist-get 'target_ticket)))
 
+(defun helm-kythe--anchor-keep-one-per-line (anchors)
+  (let (ret path1 line1)
+    (cl-loop for anchor in anchors do
+             (let ((path (helm-kythe--path-from-ticket (alist-get 'parent anchor)))
+                   (line (alist-get 'line_number (alist-get 'start anchor))))
+               (unless (and path1 (string= path path1) (= line line1))
+                 (!cons anchor ret))
+               (setq path1 path)
+               (setq line1 line)))
+    (nreverse ret)))
+
 (defun helm-kythe--anchor-to-candidate (anchor)
   (format "%s\0%s:%d:%d:%s"
           (alist-get 'ticket anchor)
@@ -194,6 +217,12 @@
           (alist-get 'line_number (alist-get 'start anchor))
           (or (alist-get 'column_offset (alist-get 'start anchor)) 0)  ;; TODO Cabal cpu: 'start' of definition_locations of getSystemArch = X86_64 does not have column_offset
           (alist-get 'snippet anchor)))
+
+(defun helm-kythe--anchors-to-candidates (anchors)
+  (mapcar #'helm-kythe--anchor-to-candidate
+          (if helm-kythe-display-one-anchor-per-line
+              (helm-kythe--anchor-keep-one-per-line anchors)
+            anchors)))
 
 (defun helm-kythe--candidate-transformer (candidate)
   (if (and helm-kythe-highlight-candidate
@@ -217,7 +246,7 @@
 
 (defun helm-kythe--find-file (open-func path)
   (cond ((file-name-absolute-p path) (funcall open-func path))
-        ((s-ends-with? path (buffer-file-name)) t)
+        ((string-suffix-p path (buffer-file-name)) t)
         (t
          (-if-let* ((_ (eq major-mode 'haskell-mode))
                     (project-root (helm-kythe--haskell-find-project-root))
@@ -250,7 +279,7 @@
   (when-let (i (string-match "path=\\([^#]+\\)" ticket)) (match-string 1 ticket)))
 
 (defun helm-kythe--ticket-equal? (ticket0 ticket1)
-  (and ticket1 (equal (s-replace "%3A" "/" ticket0) (s-replace "%3A" "/" ticket1))))
+  (and ticket1 (string= (replace-regexp-in-string "%3A" "/" ticket0 t) (replace-regexp-in-string "%3A" "/" ticket1 t))))
 
 (defun helm-kythe-post (path data)
   (let ((url-request-method "post")
@@ -276,7 +305,7 @@
     (erase-buffer))
   (-if-let* ((ticket (helm-kythe--reference-target-at-point))
                (defs (helm-kythe-get-definitions ticket)))
-      (helm-init-candidates-in-buffer 'global (mapcar #'helm-kythe--anchor-to-candidate defs))
+      (helm-init-candidates-in-buffer 'global (helm-kythe--anchors-to-candidates defs))
     (message "No definitions")))
 
 ;; TODO No results. Why?
@@ -285,7 +314,7 @@
     (erase-buffer))
   (-if-let* ((ticket (helm-comp-read "Ticket: " '()))
                (defs (helm-kythe-get-definitions ticket)))
-      (helm-init-candidates-in-buffer 'global (mapcar #'helm-kythe--anchor-to-candidate defs))
+      (helm-init-candidates-in-buffer 'global (helm-kythe--anchors-to-candidates defs))
     (message "No definitions")))
 
 (defun helm-kythe--source-imenu ()
@@ -308,7 +337,7 @@
     (erase-buffer))
   (-if-let* ((ticket (helm-kythe--reference-target-at-point))
                (refs (helm-kythe-get-references ticket)))
-      (helm-init-candidates-in-buffer 'global (mapcar #'helm-kythe--anchor-to-candidate refs))
+      (helm-init-candidates-in-buffer 'global (helm-kythe--anchors-to-candidates refs))
     (message "No references")))
 
 ;; TODO No results. Why?
@@ -317,7 +346,7 @@
     (erase-buffer))
   (-if-let* ((ticket (helm-comp-read "Ticket: " '()))
              (refs (helm-kythe-get-references ticket)))
-      (helm-init-candidates-in-buffer 'global (mapcar #'helm-kythe--anchor-to-candidate refs))
+      (helm-init-candidates-in-buffer 'global (helm-kythe--anchors-to-candidates refs))
     (message "No references")))
 
 (defun helm-kythe-post-decorations (ticket)
@@ -401,13 +430,20 @@
     (helm-kythe--set-mode-line 'helm-kythe-active)
     nil))
 
+(defun helm-kythe-eldoc-clear-cache ()
+  (interactive)
+  (clrhash helm-kythe--eldoc-cache))
+
 (defun helm-kythe-eldoc-function ()
-  (-when-let* [(ticket (helm-kythe--reference-target-at-point))
-               (defs (helm-kythe-get-definitions ticket))]
-    (-let [doc (alist-get 'snippet (car defs))]
-      (if (eq major-mode 'haskell-mode)
-          (helm-kythe--fontify-haskell doc)
-        doc))))
+  (when-let (ticket (helm-kythe--reference-target-at-point))
+    (-let [doc (or
+                (gethash ticket helm-kythe--eldoc-cache)
+                (when-let (defs (helm-kythe-get-definitions ticket))
+                  (puthash ticket (alist-get 'snippet (car defs)) helm-kythe--eldoc-cache)))]
+      (when doc
+        (if (eq major-mode 'haskell-mode)
+            (helm-kythe--fontify-haskell doc)
+          doc)))))
 
 (defun helm-kythe-find-definitions ()
   (interactive)
@@ -479,6 +515,7 @@
 (easy-menu-define helm-kythe-menu helm-kythe-mode-map "helm-kythe menu"
   '("Kythe"
     ["Apply decorations" helm-kythe-apply-decorations t]
+    ["Clear eldoc cache" helm-kythe-eldoc-clear-cache t]
     ["Find definitions" helm-kythe-find-definitions t]
     ["Find references" helm-kythe-find-references t]
     ["imenu" helm-kythe-imenu t]
