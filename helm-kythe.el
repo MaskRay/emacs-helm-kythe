@@ -3,9 +3,10 @@
 ;; Copyright (C) 2017 Google Inc.
 
 ;; Author: Fangrui Song <i@maskray.me>
-;; Package-Version: 20170629.1
+;; Package-Version: 20170702.1
 ;; Version: 0.0.1
-;; Package-Requires: ((emacs "24.4") (dash "2.13.0") (helm "2.0"))
+;; URL: https://github.com/MaskRay/emacs-helm-kythe
+;; Package-Requires: ((emacs "25") (dash "2.12.0") (helm "2.0"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -24,7 +25,7 @@
 
 ;; `helm-kythe.el' is a `helm' interface of Google Kythe.
 
-;; This package is enlightened by `'helm-gtags.el'.
+;; This package is enlightened by `helm-gtags.el'.
 
 ;; Usage
 ;; For C++:
@@ -50,6 +51,7 @@
 (require 'dash)
 (require 'easymenu)
 (require 'helm)
+(require 'json)
 (require 'subr-x)
 
 (defcustom helm-kythe-display-one-anchor-per-line t
@@ -117,31 +119,31 @@
 
 (defvar helm-kythe--use-otherwin nil)
 
-(defvar helm-source-helm-kythe-definitions
+(defvar helm-kythe-source-definitions
   (helm-build-in-buffer-source "Find definitions"
     :init #'helm-kythe--source-definitions
     :real-to-display #'helm-kythe--candidate-transformer
     :action #'helm-kythe--find-file-action))
 
-(defvar helm-source-helm-kythe-definitions-prompt
+(defvar helm-kythe-source-definitions-prompt
   (helm-build-in-buffer-source "Find definitions with prompt"
     :init #'helm-kythe--source-definitions-prompt
     :real-to-display #'helm-kythe--candidate-transformer
     :action #'helm-kythe--find-file-action))
 
-(defvar helm-source-helm-kythe-imenu
+(defvar helm-kythe-source-imenu
   (helm-build-in-buffer-source "imenu"
     :init #'helm-kythe--source-imenu
     :real-to-display #'helm-kythe--candidate-transformer
     :action #'helm-kythe--find-file-action))
 
-(defvar helm-source-helm-kythe-references
+(defvar helm-kythe-source-references
   (helm-build-in-buffer-source "Find references"
     :init #'helm-kythe--source-references
     :real-to-display #'helm-kythe--candidate-transformer
     :action #'helm-kythe--find-file-action))
 
-(defvar helm-source-helm-kythe-references-prompt
+(defvar helm-kythe-source-references-prompt
   (helm-build-in-buffer-source "Find references with prompt"
     :init #'helm-kythe--source-references-prompt
     :real-to-display #'helm-kythe--candidate-transformer
@@ -164,7 +166,8 @@
           (column (string-to-number (match-string-no-properties 4 candidate))))
       (when (helm-kythe--find-file
              (if helm-kythe--use-otherwin #'find-file-other-window #'find-file) filename)
-        (goto-line line)
+        (goto-char (point-min))
+        (forward-line (1- line))
         (forward-char column)
         ;; If the target has been modified, enumerate all decorations and find the ticket.
         (if (helm-kythe--ticket-equal? ticket (or (helm-kythe--definition-at-point) (helm-kythe--reference-at-point)))
@@ -174,7 +177,7 @@
                       (cl-loop for (prop . get-prop) in
                             '((helm-kythe-definition . helm-kythe--definition-at-point)
                               (helm-kythe-reference . helm-kythe--reference-at-point)) do
-                              (beginning-of-buffer)
+                              (goto-char (point-min))
                               (while (not (eobp))
                                 (let ((ticket1 (funcall get-prop))
                                       (next-change
@@ -286,7 +289,7 @@
         (url-request-extra-headers '(("content-type" . "application/json")))
         (url-request-data (json-encode data)))
     (with-current-buffer (url-retrieve-synchronously (concat helm-kythe-http-server-url path) t)
-      (beginning-of-buffer)
+      (goto-char (point-min))
       (re-search-forward "\n\n")
       (buffer-string)
       (condition-case nil
@@ -322,7 +325,7 @@
     (erase-buffer))
   (let ((xs))
     (save-excursion
-      (beginning-of-buffer)
+      (goto-char (point-min))
       (while (not (eobp))
         (let ((def (get-text-property (point) 'helm-kythe-definition))
               (next-change
@@ -447,19 +450,19 @@
 
 (defun helm-kythe-find-definitions ()
   (interactive)
-  (helm-kythe--common '(helm-source-helm-kythe-definitions)))
+  (helm-kythe--common '(helm-kythe-source-definitions)))
 
 (defun helm-kythe-find-definitions-prompt ()
   (interactive)
-  (helm-kythe--common '(helm-source-helm-kythe-definitions-prompt)))
+  (helm-kythe--common '(helm-kythe-source-definitions-prompt)))
 
 (defun helm-kythe-find-references ()
   (interactive)
-  (helm-kythe--common '(helm-source-helm-kythe-references)))
+  (helm-kythe--common '(helm-kythe-source-references)))
 
 (defun helm-kythe-find-references-prompt ()
   (interactive)
-  (helm-kythe--common '(helm-source-helm-kythe-references-prompt)))
+  (helm-kythe--common '(helm-kythe-source-references-prompt)))
 
 (defun helm-kythe-dwim ()
   (interactive)
@@ -469,7 +472,7 @@
 
 (defun helm-kythe-imenu ()
   (interactive)
-  (helm-kythe--common '(helm-source-helm-kythe-imenu)))
+  (helm-kythe--common '(helm-kythe-source-imenu)))
 
 (defun helm-kythe-resume ()
   (interactive)
@@ -524,3 +527,5 @@
     ))
 
 (provide 'helm-kythe)
+
+;;; helm-kythe.el ends here
