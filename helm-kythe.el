@@ -49,6 +49,7 @@
 
 (require 'cl-lib)
 (require 'dash)
+(require 'evil-jumps)
 (require 'easymenu)
 (require 'helm)
 (require 'json)
@@ -71,12 +72,12 @@
   :type 'string)
 
 (defcustom helm-kythe-prefix-key (kbd "C-c k")
-  "If non-nil, it is used for the prefix key of helm-kythe-xxx command."
+  "If non-empty, it is used for the prefix key of helm-kythe-xxx command."
   :group 'helm-kythe
   :type 'string)
 
 (defcustom helm-kythe-file-search-paths nil
-  "A list of search paths for \"kythe://?path=$path\"."
+  "A list of search paths for converting Kythe paths to filenames, which is used by `helm-kythe--path-to-filename-search-path'."
   :group 'helm-kythe
   :type '(list string))
 
@@ -106,11 +107,6 @@ The first function returns a non-nil value will be used.
   triggered if the number of scrolling lines is greater than `scroll-conservatively'."
   :group 'helm-kythe
   :type '(choice (const always) (const never) (const non-local)))
-
-(defcustom helm-kythe-suggested-key-mapping t
-  "If non-nil, suggested key mapping is enabled."
-  :group 'helm-kythe
-  :type 'boolean)
 
 (defface helm-kythe-active
   '()
@@ -211,20 +207,20 @@ The first function returns a non-nil value will be used.
         (if (helm-kythe--ticket-equal? ticket (or (helm-kythe--definition-at-point) (helm-kythe--reference-at-point)))
             (funcall do-found)
           (let ((p (point)))
-            (unless (catch 'loop
-                      (cl-loop for (prop . get-prop) in
-                            '((helm-kythe-definition . helm-kythe--definition-at-point)
-                              (helm-kythe-reference . helm-kythe--reference-at-point)) do
-                              (goto-char (point-min))
-                              (while (not (eobp))
-                                (let ((ticket1 (funcall get-prop))
-                                      (next-change
-                                       (or (next-single-property-change (point) prop)
-                                           (point-max))))
-                                  (when (helm-kythe--ticket-equal? ticket ticket1)
-                                    (funcall do-found)
-                                    (throw 'loop t))
-                                  (goto-char next-change)))))
+            (unless
+                (cl-loop for (prop . get-prop) in
+                         '((helm-kythe-definition . helm-kythe--definition-at-point)
+                           (helm-kythe-reference . helm-kythe--reference-at-point)) do
+                           (goto-char (point-min))
+                           (while (not (eobp))
+                             (let ((ticket1 (funcall get-prop))
+                                   (next-change
+                                    (or (next-single-property-change (point) prop)
+                                        (point-max))))
+                               (when (helm-kythe--ticket-equal? ticket ticket1)
+                                 (funcall do-found)
+                                 (cl-return t))
+                               (goto-char next-change))))
               (goto-char p))))))))
 
 (defun helm-kythe--action-openfile-other-window (candidate)
@@ -273,7 +269,7 @@ The first function returns a non-nil value will be used.
 (defun helm-kythe--filename-to-path-search-path (filename)
   (cl-loop for search-path in helm-kythe-file-search-paths do
            (when-let (path (file-relative-name filename search-path))
-             (return path))))
+             (cl-return path))))
 
 (defun helm-kythe--haskell-find-project-root ()
   "Find the Haskell project root."
@@ -309,7 +305,7 @@ The first function returns a non-nil value will be used.
     (cl-loop for func in helm-kythe-path-to-filename-functions do
              (when-let (filename (funcall func path ticket))
                (funcall open-func filename)
-               (return t)))))
+               (cl-return t)))))
 
 (defun helm-kythe--fontify-haskell (line)
   "Fontify a line that will be displayed in minibuffer"
@@ -343,7 +339,7 @@ a/b.cc => $search_path/a/b.cc"
     (cl-loop for search-path in helm-kythe-file-search-paths do
              (-if-let* ((f (concat (file-name-as-directory search-path) path))
                         (_ (file-exists-p f)))
-                 (return f)))))
+                 (cl-return f)))))
 
 (defun helm-kythe--reference-at-point ()
   (-some->> (get-text-property (point) 'helm-kythe-reference) (alist-get 'source_ticket)))
@@ -465,7 +461,7 @@ a/b.cc => $search_path/a/b.cc"
                (condition-case ex
                    (helm-kythe-decorations path)
                  ('helm-kythe-error (error "helm-kythe-apply-decorations: %s" (cdr ex))))
-               (return)))))
+               (cl-return)))))
 
 ;; .cross_references | values[].definition[].anchor
 (defun helm-kythe-get-definitions (ticket)
@@ -576,6 +572,7 @@ a/b.cc => $search_path/a/b.cc"
     (error "Error: helm-kythe buffer does not exist."))
   (helm-resume helm-kythe--buffer))
 
+(defvar helm-kythe-map (make-sparse-keymap))
 (defvar helm-kythe-mode-map (make-sparse-keymap))
 (defvar-local helm-kythe-mode-line (helm-kythe--propertize-mode-line 'helm-kythe-inactive))
 (put 'helm-kythe-mode-line 'risky-local-variable t)
@@ -595,25 +592,24 @@ a/b.cc => $search_path/a/b.cc"
     (remove-function (local 'eldoc-documentation-function)
                      #'helm-kythe-eldoc-function))))
 
-(when helm-kythe-suggested-key-mapping
-  (let ((command-table '(("a" . helm-kythe-apply-decorations)
-                         ("d" . helm-kythe-find-definitions)
-                         ;; ("D" . helm-kythe-find-definitions-prompt)
-                         ("i" . helm-kythe-imenu)
-                         ("r" . helm-kythe-find-references)
-                         ;; ("R" . helm-kythe-find-references-prompt)
-                         ("l" . helm-kythe-resume)
-                         ("C-d" . helm-kythe-find-definitions-other-window)
-                         ("C-i" . helm-kythe-jump-forward)
-                         ("C-o" . helm-kythe-jump-backward)
-                         ("C-r" . helm-kythe-find-references-other-window)))
-        (key-func (if (string-prefix-p "\\" helm-kythe-prefix-key)
-                      #'concat
-                    (lambda (prefix key) (kbd (concat prefix " " key))))))
-    (cl-loop for (key . command) in command-table
-          do
-          (define-key helm-kythe-mode-map (funcall key-func helm-kythe-prefix-key key) command))
-    ))
+(let ((command-table '(("a" . helm-kythe-apply-decorations)
+                       ("d" . helm-kythe-find-definitions)
+                       ;; ("D" . helm-kythe-find-definitions-prompt)
+                       ("i" . helm-kythe-imenu)
+                       ("r" . helm-kythe-find-references)
+                       ;; ("R" . helm-kythe-find-references-prompt)
+                       ("l" . helm-kythe-resume)
+                       ("C-d" . helm-kythe-find-definitions-other-window)
+                       ("C-i" . helm-kythe-jump-forward)
+                       ("C-o" . helm-kythe-jump-backward)
+                       ("C-r" . helm-kythe-find-references-other-window)))
+      )
+  (cl-loop for (key . command) in command-table
+           do
+           (define-key helm-kythe-map (kbd key) command)))
+
+(when helm-kythe-prefix-key
+  (define-key helm-kythe-mode-map helm-kythe-prefix-key helm-kythe-map))
 
 (easy-menu-define helm-kythe-menu helm-kythe-mode-map "helm-kythe menu"
   '("Kythe"

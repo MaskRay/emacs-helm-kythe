@@ -2,7 +2,7 @@
 
 ## Introduction
 
-`helm-kythe.el` is a helm interface for Google Kythe.
+`helm-kythe.el` is a Helm interface for Google Kythe.
 
 ## Requirements
 
@@ -12,6 +12,10 @@
 * `helm >= 2.0`
 
 ## Usage
+
+`helm-kythe-eldoc-function`: this function will be `add-function` to `eldoc-documentation-function` when `helm-kythe-mode` is enabled. Kythe `snippet` of the definition will be displayed in `minibuffer` when `point` is at a reference.
+
+### Commands
 
 `helm-kythe-mode`: enable `helm-kythe-mode`. You will see `Kythe` in mode line.
 
@@ -31,19 +35,21 @@
 
 ## Suggested key mapping
 
-`helm-kythe.el` provides suggested key mapping if `helm-kythe-suggested-key-mapping` is non-nil. The prefix key is `helm-kythe-prefix-key (default: C-c k)` .
+`helm-kythe-map` is defined for useful commands:
 
-|Key          |Command                                      |
-|:------------|:--------------------------------------------|
-|Prefix `a`   | `helm-kythe-apply-decorations`              |
-|Prefix `d`   | `helm-kythe-find-definitions`               |
-|Prefix `i`   | `helm-kythe-imenu`                          |
-|Prefix `l`   | `helm-kythe-resume`                         |
-|Prefix `r`   | `helm-kythe-find-references`                |
-|Prefix `C-d` | `helm-kythe-find-definitions-other-window`  |
-|Prefix `C-i` | `helm-kythe-jump-forward`                   |
-|Prefix `C-o` | `helm-kythe-jump-backward`                  |
-|Prefix `C-r` | `helm-kythe-find-references-other-window`   |
+|Key   |Command                                      |
+|:-----|:--------------------------------------------|
+|`a`   | `helm-kythe-apply-decorations`              |
+|`d`   | `helm-kythe-find-definitions`               |
+|`i`   | `helm-kythe-imenu`                          |
+|`l`   | `helm-kythe-resume`                         |
+|`r`   | `helm-kythe-find-references`                |
+|`C-d` | `helm-kythe-find-definitions-other-window`  |
+|`C-i` | `helm-kythe-jump-forward`                   |
+|`C-o` | `helm-kythe-jump-backward`                  |
+|`C-r` | `helm-kythe-find-references-other-window`   |
+
+If `helm-kythe-prefix-key` (default: `(kbd "C-c k")`) is not empty, it will be bound to `helm-kythe-map`, thus you can use `C-c k d` for `helm-kythe-find-definitions`.
 
 ## Sample configuration
 
