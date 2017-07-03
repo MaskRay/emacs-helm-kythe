@@ -76,6 +76,11 @@
   :group 'helm-kythe
   :type 'string)
 
+(defcustom helm-kythe-preselect t
+  "If non-nil, preselect the Helm candidate corresponding to current ticket."
+  :group 'helm-kythe
+  :type 'string)
+
 (defcustom helm-kythe-file-search-paths nil
   "A list of search paths for converting Kythe paths to filenames, which is used by `helm-kythe--path-to-filename-search-path'."
   :group 'helm-kythe
@@ -282,7 +287,8 @@ The first function returns a non-nil value will be used.
 (defun helm-kythe--candidate-transformer (candidate)
   (if (and helm-kythe-highlight-candidate
            (string-match helm-kythe--ticket-anchor-regex candidate))
-      (format "%s:%s:%s:%s"
+      (format "%s%s:%s:%s:%s"
+              (propertize (concat (match-string-no-properties 1 candidate) "\0") 'invisible t)  ; ticket
               (propertize (match-string-no-properties 2 candidate) 'face 'helm-kythe-file)
               (propertize (match-string-no-properties 3 candidate) 'face 'helm-kythe-lineno)
               (propertize (match-string-no-properties 4 candidate) 'face 'helm-kythe-lineno)
@@ -295,10 +301,12 @@ The first function returns a non-nil value will be used.
   (cons (byte-to-position (1+ (alist-get 'byte_offset (alist-get start-key object))))
         (byte-to-position (1+ (alist-get 'byte_offset (alist-get end-key object))))))
 
-(defun helm-kythe--common (srcs)
+(defun helm-kythe--common (srcs &optional caller-ticket)
   (let ((helm-quit-if-no-candidate t)
         (helm-execute-action-at-once-if-one t))
-    (helm :sources srcs :buffer helm-kythe--buffer)))
+    (if (and helm-kythe-preselect caller-ticket)
+        (helm :sources srcs :buffer helm-kythe--buffer :preselect (concat "^" (regexp-quote caller-ticket)))
+      (helm :sources srcs :buffer helm-kythe--buffer))))
 
 (defun helm-kythe--find-file (path ticket)
   (-let [open-func (if helm-kythe--use-otherwin #'find-file-other-window #'find-file)]
@@ -393,7 +401,7 @@ a/b.cc => $search_path/a/b.cc"
 (defun helm-kythe--source-imenu ()
   (with-current-buffer (helm-candidate-buffer 'global)
     (erase-buffer))
-  (let ((xs))
+  (let ((anchors))
     (save-excursion
       (goto-char (point-min))
       (while (not (eobp))
@@ -401,9 +409,9 @@ a/b.cc => $search_path/a/b.cc"
               (next-change
                (or (next-single-property-change (point) 'helm-kythe-definition)
                    (point-max))))
-          (when def (push (helm-kythe--anchor-to-candidate def) xs))
+          (when def (push def anchors))
           (goto-char next-change))))
-    (helm-init-candidates-in-buffer 'global (nreverse xs))))
+    (helm-init-candidates-in-buffer 'global (helm-kythe--anchors-to-candidates (nreverse anchors)))))
 
 (defun helm-kythe--source-references ()
   (with-current-buffer (helm-candidate-buffer 'global)
@@ -453,8 +461,7 @@ a/b.cc => $search_path/a/b.cc"
   "Fetch cross references information and decorate definitions/references with text properties."
   (interactive)
   (with-silent-modifications
-    (dolist (prop '(helm-kythe-definition helm-kythe-reference))
-      (put-text-property (point-min) (point-max) prop nil))
+    (remove-text-properties (point-min) (point-max) '(helm-kythe-definition nil helm-kythe-reference nil))
     (helm-kythe--set-mode-line 'helm-kythe-inactive)
     (cl-loop for func in helm-kythe-filename-to-path-functions do
              (when-let (path (funcall func (buffer-file-name)))
@@ -529,12 +536,12 @@ a/b.cc => $search_path/a/b.cc"
 
 (defun helm-kythe-find-definitions ()
   (interactive)
-  (helm-kythe--common '(helm-kythe-source-definitions)))
+  (helm-kythe--common '(helm-kythe-source-definitions) (helm-kythe--definition-at-point)))
 
 (defun helm-kythe-find-definitions-other-window ()
   (interactive)
   (-let [helm-kythe--use-otherwin t]
-    (helm-kythe--common '(helm-kythe-source-definitions))))
+    (helm-kythe-find-definitions)))
 
 (defun helm-kythe-find-definitions-prompt ()
   (interactive)
@@ -542,12 +549,12 @@ a/b.cc => $search_path/a/b.cc"
 
 (defun helm-kythe-find-references ()
   (interactive)
-  (helm-kythe--common '(helm-kythe-source-references)))
+  (helm-kythe--common '(helm-kythe-source-references) (helm-kythe--reference-at-point)))
 
 (defun helm-kythe-find-references-other-window ()
   (interactive)
   (-let [helm-kythe--use-otherwin t]
-    (helm-kythe--common '(helm-kythe-source-references))))
+    (helm-kythe-find-references)))
 
 (defun helm-kythe-find-references-prompt ()
   (interactive)
@@ -563,7 +570,7 @@ a/b.cc => $search_path/a/b.cc"
 
 (defun helm-kythe-imenu ()
   (interactive)
-  (helm-kythe--common '(helm-kythe-source-imenu)))
+  (helm-kythe--common '(helm-kythe-source-imenu) (helm-kythe--definition-at-point)))
 
 (defun helm-kythe-resume ()
   "Resume a previous `helm-kythe` session."
