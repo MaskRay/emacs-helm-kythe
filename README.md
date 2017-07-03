@@ -8,6 +8,7 @@
 
 * `emacs >= 25`
 * `dash >= 2.12.0`
+* `evil >= 1.0`, for jump list
 * `helm >= 2.0`
 
 ## Usage
@@ -26,6 +27,8 @@
 
 `helm-kythe-resume`: resurrect previously invoked `helm-kythe` command.
 
+`helm-kythe-jump-backward, helm-kythe-jump-forward`: `helm-kythe` maintains a separate jump list (`helm-kythe` jump commands) for each window. The two commands go to the older/newer position in the jump list.
+
 ## Suggested key mapping
 
 `helm-kythe.el` provides suggested key mapping if `helm-kythe-suggested-key-mapping` is non-nil. The prefix key is `helm-kythe-prefix-key (default: C-c k)` .
@@ -38,7 +41,9 @@
 |Prefix `l`   | `helm-kythe-resume`                         |
 |Prefix `r`   | `helm-kythe-find-references`                |
 |Prefix `C-d` | `helm-kythe-find-definitions-other-window`  |
-|Prefix `C-r` | `helm-kythe-find-references-other-window` |
+|Prefix `C-i` | `helm-kythe-jump-forward`                   |
+|Prefix `C-o` | `helm-kythe-jump-backward`                  |
+|Prefix `C-r` | `helm-kythe-find-references-other-window`   |
 
 ## Sample configuration
 
