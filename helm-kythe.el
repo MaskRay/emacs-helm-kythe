@@ -230,13 +230,13 @@ The first function returns a non-nil value will be used.
 (defun helm-kythe--anchor-keep-one-per-line (anchors)
   "If there are more than one Kythe anchors in one line, keep the first and discard the rest."
   (let (ret path1 line1)
-    (cl-loop for anchor in anchors do
-             (let ((path (helm-kythe--path-from-ticket (alist-get 'parent anchor)))
-                   (line (alist-get 'line_number (alist-get 'start anchor))))
-               (unless (and path1 (string= path path1) (= line line1))
-                 (!cons anchor ret))
-               (setq path1 path)
-               (setq line1 line)))
+    (dolist (anchor anchors)
+      (let ((path (helm-kythe--path-from-ticket (alist-get 'parent anchor)))
+            (line (alist-get 'line_number (alist-get 'start anchor))))
+        (unless (and path1 (string= path path1) (= line line1))
+          (!cons anchor ret))
+        (setq path1 path)
+        (setq line1 line)))
     (nreverse ret)))
 
 (defun helm-kythe--anchor-to-candidate (anchor)
@@ -453,8 +453,8 @@ a/b.cc => $search_path/a/b.cc"
   "Fetch cross references information and decorate definitions/references with text properties."
   (interactive)
   (with-silent-modifications
-    (cl-loop for prop in '(helm-kythe-definition helm-kythe-reference) do
-          (put-text-property (point-min) (point-max) prop nil))
+    (dolist (prop '(helm-kythe-definition helm-kythe-reference))
+      (put-text-property (point-min) (point-max) prop nil))
     (helm-kythe--set-mode-line 'helm-kythe-inactive)
     (cl-loop for func in helm-kythe-filename-to-path-functions do
              (when-let (path (funcall func (buffer-file-name)))
@@ -619,8 +619,10 @@ a/b.cc => $search_path/a/b.cc"
     ["Find references" helm-kythe-find-references t]
     ["imenu" helm-kythe-imenu t]
     ["Resume" helm-kythe-resume t]
+    "---"
     ["Jump backward" helm-kythe-jump-backward t]
     ["Jump forward" helm-kythe-jump-forward t]
+    "---"
     ["Customize" (customize-group 'helm-kythe)]
     ))
 
