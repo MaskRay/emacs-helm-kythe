@@ -466,9 +466,8 @@ a/b.cc => $search_path/a/b.cc"
 (defun helm-kythe-apply-decorations ()
   "Fetch cross references information and decorate definitions/references with text properties."
   (interactive)
+  (helm-kythe-remove-decorations)
   (with-silent-modifications
-    (remove-text-properties (point-min) (point-max) '(helm-kythe-definition nil helm-kythe-reference nil))
-    (helm-kythe--set-mode-line 'helm-kythe-inactive)
     (cl-loop for func in helm-kythe-filename-to-path-functions do
              (when-let (path (funcall func (buffer-file-name)))
                (condition-case ex
@@ -505,19 +504,27 @@ a/b.cc => $search_path/a/b.cc"
                               ))
            (assoc 'cross_references) (cdr)))
 
+(defvar helm-kythe--mouse-map-definition (make-sparse-keymap))
+(defvar helm-kythe--mouse-map-reference (make-sparse-keymap))
+(define-key helm-kythe--mouse-map-definition [mouse-1] (lambda () (interactive) (set-mark nil) (helm-kythe-find-definitions)))
+(define-key helm-kythe--mouse-map-reference [mouse-1] (lambda () (interactive) (set-mark nil) (helm-kythe-find-references)))
+
 (defun helm-kythe-decorations (filepath)
   (when-let (refs (helm-kythe-post-decorations (concat "kythe://?path=" filepath)))
     (mapc (lambda (ref)
             (-let [(start . end) (helm-kythe--char-offsets ref 'anchor_start 'anchor_end)]
               (when end
-                (put-text-property start end 'helm-kythe-reference ref)))) (alist-get 'reference refs))
+                (add-text-properties start end `(helm-kythe-reference ,ref keymap ,helm-kythe--mouse-map-definition mouse-face highlight))
+                )))
+          (alist-get 'reference refs))
     (mapc (lambda (ticket-def)
             (-let [def (cdr ticket-def)]
               ;; cxx_extractor or cxx_indexer, "definition_locations" of a.cc may include tickets of "stdio.h"
               (when (equal filepath (helm-kythe--path-from-ticket (alist-get 'ticket def)))
                 (-let [(start . end) (helm-kythe--char-offsets def 'start 'end)]
                   (when end
-                    (put-text-property start end 'helm-kythe-definition def)))))) (alist-get 'definition_locations refs))
+                    (add-text-properties start end `(helm-kythe-definition ,def keymap ,helm-kythe--mouse-map-reference mouse-face highlight)))))))
+          (alist-get 'definition_locations refs))
     (helm-kythe--set-mode-line 'helm-kythe-active)
     nil))
 
@@ -584,6 +591,12 @@ a/b.cc => $search_path/a/b.cc"
   (interactive)
   (helm-kythe--common '(helm-kythe-source-imenu) (helm-kythe--definition-at-point)))
 
+(defun helm-kythe-remove-decorations ()
+  (interactive)
+  (with-silent-modifications
+    (remove-text-properties (point-min) (point-max) '(helm-kythe-definition nil helm-kythe-reference nil))
+    (helm-kythe--set-mode-line 'helm-kythe-inactive)))
+
 (defun helm-kythe-resume ()
   "Resume a previous `helm-kythe` session."
   (interactive)
@@ -609,23 +622,24 @@ a/b.cc => $search_path/a/b.cc"
     (helm-kythe-apply-decorations))
    (t
     (remove-function (local 'eldoc-documentation-function)
-                     #'helm-kythe-eldoc-function))))
+                     #'helm-kythe-eldoc-function)
+    (helm-kythe-remove-decorations))))
 
-(let ((command-table '(("a" . helm-kythe-apply-decorations)
-                       ("d" . helm-kythe-find-definitions)
-                       ;; ("D" . helm-kythe-find-definitions-prompt)
-                       ("i" . helm-kythe-imenu)
-                       ("r" . helm-kythe-find-references)
-                       ;; ("R" . helm-kythe-find-references-prompt)
-                       ("l" . helm-kythe-resume)
-                       ("C-d" . helm-kythe-find-definitions-other-window)
-                       ("C-i" . helm-kythe-jump-forward)
-                       ("C-o" . helm-kythe-jump-backward)
-                       ("C-r" . helm-kythe-find-references-other-window)))
-      )
-  (cl-loop for (key . command) in command-table
-           do
-           (define-key helm-kythe-map (kbd key) command)))
+(cl-loop
+ for (key . command) in
+ '(("a" . helm-kythe-apply-decorations)
+   ("d" . helm-kythe-find-definitions)
+   ;; ("D" . helm-kythe-find-definitions-prompt)
+   ("i" . helm-kythe-imenu)
+   ("r" . helm-kythe-find-references)
+   ;; ("R" . helm-kythe-find-references-prompt)
+   ("l" . helm-kythe-resume)
+   ("C-d" . helm-kythe-find-definitions-other-window)
+   ("C-i" . helm-kythe-jump-forward)
+   ("C-o" . helm-kythe-jump-backward)
+   ("C-r" . helm-kythe-find-references-other-window))
+ do
+ (define-key helm-kythe-map (kbd key) command))
 
 (when helm-kythe-prefix-key
   (define-key helm-kythe-mode-map helm-kythe-prefix-key helm-kythe-map))
