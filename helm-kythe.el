@@ -117,6 +117,10 @@ The first function returns a non-nil value will be used.
   '()
   "Face for mode line when Kythe is active.")
 
+(defface helm-kythe-column
+  '((t :inherit font-lock-doc-face))
+  "Face for column numbers.")
+
 (defface helm-kythe-file
   '((t :inherit font-lock-keyword-face))
   "Face for filenames in the error list.")
@@ -125,9 +129,9 @@ The first function returns a non-nil value will be used.
   '((t (:strike-through t)))
   "Face for mode line when Kythe is inactive.")
 
-(defface helm-kythe-lineno
+(defface helm-kythe-line
   '((t :inherit font-lock-doc-face))
-  "Face for line numbers in the error list.")
+  "Face for line numbers.")
 
 (defface helm-kythe-match
   '((t :inherit helm-match))
@@ -285,21 +289,24 @@ The first function returns a non-nil value will be used.
     p))
 
 (defun helm-kythe--candidate-transformer (candidate)
-  (if (and helm-kythe-highlight-candidate
-           (string-match helm-kythe--ticket-anchor-regex candidate))
-      (format "%s%s:%s:%s:%s"
-              (propertize (concat (match-string-no-properties 1 candidate) "\0") 'invisible t)  ; ticket
-              (propertize (match-string-no-properties 2 candidate) 'face 'helm-kythe-file)
-              (propertize (match-string-no-properties 3 candidate) 'face 'helm-kythe-lineno)
-              (propertize (match-string-no-properties 4 candidate) 'face 'helm-kythe-lineno)
-              (match-string-no-properties 5 candidate)
-              )
-      candidate))
+  (let* ((e-nul (string-match "\0" candidate))
+         (e-path (string-match ":" candidate (1+ e-nul)))
+         (e-line (string-match ":" candidate (1+ e-path)))
+         (e-column (string-match ":" candidate (1+ e-line))))
+    (put-text-property 0 (1+ e-nul) 'invisible t candidate)
+    (when helm-kythe-highlight-candidate
+      (put-text-property (1+ e-nul) e-path 'face 'helm-kythe-file candidate)
+      (put-text-property (1+ e-path) e-line 'face 'helm-kythe-line candidate)
+      (put-text-property (1+ e-line) e-column 'face 'helm-kythe-column candidate))
+    candidate))
 
 (defun helm-kythe--char-offsets (object start-key end-key)
   "Convert Kythe byte offsets to Emacs positions."
-  (cons (byte-to-position (1+ (alist-get 'byte_offset (alist-get start-key object))))
-        (byte-to-position (1+ (alist-get 'byte_offset (alist-get end-key object))))))
+  (if-let ((start (alist-get 'byte_offset (alist-get start-key object)))
+           (end (alist-get 'byte_offset (alist-get end-key object))))
+    (cons (byte-to-position (1+ start))
+          (byte-to-position (1+ end)))
+    '(nil . nil)))
 
 (defun helm-kythe--common (srcs &optional caller-ticket)
   (let ((helm-quit-if-no-candidate t)
