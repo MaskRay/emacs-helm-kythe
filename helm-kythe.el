@@ -3,7 +3,7 @@
 ;; Copyright (C) 2017 Google Inc.
 
 ;; Author: Fangrui Song <i@maskray.me>
-;; Package-Version: 20170703.1
+;; Package-Version: 20170704.1
 ;; Version: 0.0.1
 ;; URL: https://github.com/MaskRay/emacs-helm-kythe
 ;; Package-Requires: ((emacs "25") (dash "2.12.0") (evil "1.0.0") (helm "2.0"))
@@ -113,10 +113,6 @@ The first function returns a non-nil value will be used.
   :group 'helm-kythe
   :type '(choice (const always) (const never) (const non-local)))
 
-(defface helm-kythe-active
-  '()
-  "Face for mode line when Kythe is active.")
-
 (defface helm-kythe-column
   '((t :inherit font-lock-constant-face))
   "Face for column numbers.")
@@ -179,7 +175,7 @@ The first function returns a non-nil value will be used.
     :real-to-display #'helm-kythe--candidate-transformer
     :action #'helm-kythe--find-file-action))
 
-(defvar-local helm-kythe-applied-decorations-p nil
+(defvar-local helm-kythe-decorated nil
   "Non-nil if decorations have been applied.")
 
 (defconst helm-kythe--buffer "*helm helm-kythe*")
@@ -340,6 +336,12 @@ The first function returns a non-nil value will be used.
       (font-lock-ensure)
       (buffer-string))))
 
+(defun helm-kythe--mode-line ()
+  "Text for the mode line."
+  (if helm-kythe-decorated
+      " Kythe"
+    (propertize " Kythe" 'face 'helm-kythe-inactive)))
+
 (defun helm-kythe--path-from-ticket (ticket)
   (when-let (i (string-match "path=\\([^#]+\\)" ticket)) (match-string 1 ticket)))
 
@@ -391,9 +393,6 @@ a/b.cc => $search_path/a/b.cc"
 
 (defun helm-kythe--propertize-mode-line (face)
   (propertize " Kythe" 'face face))
-
-(defun helm-kythe--set-mode-line (face)
-  (setq-local helm-kythe-mode-line (helm-kythe--propertize-mode-line face)))
 
 (defun helm-kythe--source-definitions ()
   (with-current-buffer (helm-candidate-buffer 'global)
@@ -533,7 +532,7 @@ a/b.cc => $search_path/a/b.cc"
                   (when end
                     (add-text-properties start end `(helm-kythe-definition ,def keymap ,helm-kythe--mouse-map-reference mouse-face highlight)))))))
           (alist-get 'definition_locations refs))
-    (helm-kythe--set-mode-line 'helm-kythe-active)
+    (setq-local helm-kythe-decorated t)
     nil))
 
 (defun helm-kythe-dwim ()
@@ -602,8 +601,8 @@ a/b.cc => $search_path/a/b.cc"
 (defun helm-kythe-remove-decorations ()
   (interactive)
   (with-silent-modifications
-    (remove-text-properties (point-min) (point-max) '(helm-kythe-definition nil helm-kythe-reference nil))
-    (helm-kythe--set-mode-line 'helm-kythe-inactive)))
+    (remove-text-properties (point-min) (point-max) '(helm-kythe-definition nil helm-kythe-reference nil keymap nil mouse-face nil))
+    (setq-local helm-kythe-decorated nil)))
 
 (defun helm-kythe-resume ()
   "Resume a previous `helm-kythe` session."
@@ -614,14 +613,12 @@ a/b.cc => $search_path/a/b.cc"
 
 (defvar helm-kythe-map (make-sparse-keymap))
 (defvar helm-kythe-mode-map (make-sparse-keymap))
-(defvar-local helm-kythe-mode-line (helm-kythe--propertize-mode-line 'helm-kythe-inactive))
-(put 'helm-kythe-mode-line 'risky-local-variable t)
 
 ;;;###autoload
 (define-minor-mode helm-kythe-mode ()
   "Enable helm-kythe-mode"
   :init-value nil
-  :lighter helm-kythe-mode-line
+  :lighter (:eval (helm-kythe--mode-line))
   :global nil
   :keymap helm-kythe-mode-map
   (cond
