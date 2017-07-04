@@ -375,9 +375,9 @@ a/b.cc => $search_path/a/b.cc"
             (goto-char (point-min))
             (re-search-forward "\n\n")
             (json-read-from-string (decode-coding-string (buffer-substring-no-properties (point) (point-max)) 'utf-8)))
-        ('json-error
+        (json-error
          (signal 'helm-kythe-error (concat "Kythe http_server error: " (string-trim (buffer-substring-no-properties (point) (point-max))))))
-        ('error
+        (error
          (signal 'helm-kythe-error (concat "Kythe http_server error")))
         ))))
 
@@ -452,7 +452,7 @@ a/b.cc => $search_path/a/b.cc"
 (defun helm-kythe-post-dir (path)
   (condition-case ex
       (helm-kythe-post "/dir" `((path . ,path)))
-    ('helm-kythe-error (error "%s: %s" (nth 1 (backtrace-frame 4)) (cdr ex)))))
+    (helm-kythe-error (error "%s: %s" (nth 1 (backtrace-frame 4)) (cdr ex)))))
 
 (defun helm-kythe-post-xrefs (ticket data)
   (condition-case ex
@@ -461,7 +461,7 @@ a/b.cc => $search_path/a/b.cc"
                       (ticket . [,ticket])
                       ,@data
                       ))
-    ('helm-kythe-error (error "%s: %s" (nth 1 (backtrace-frame 4)) (cdr ex)))))
+    (helm-kythe-error (error "%s: %s" (nth 1 (backtrace-frame 4)) (cdr ex)))))
 
 (defun helm-kythe-apply-decorations ()
   "Fetch cross references information and decorate definitions/references with text properties."
@@ -473,7 +473,9 @@ a/b.cc => $search_path/a/b.cc"
              (when-let (path (funcall func (buffer-file-name)))
                (condition-case ex
                    (helm-kythe-decorations path)
-                 ('helm-kythe-error (error "helm-kythe-apply-decorations: %s" (cdr ex))))
+                 (helm-kythe-error
+                  (when (called-interactively-p 'any)
+                    (error "helm-kythe-apply-decorations: %s" (cdr ex)))))
                (cl-return)))))
 
 ;; .cross_references | values[].definition[].anchor
