@@ -13,7 +13,7 @@
 
 ## Usage
 
-`helm-kythe-eldoc-function`: this function will be `add-function` to `eldoc-documentation-function` when `helm-kythe-mode` is enabled. Kythe `snippet` of the definition will be displayed in `minibuffer` when `point` is at a reference.
+`helm-kythe-eldoc-function`: this function will be `add-function` to `eldoc-documentation-function` when `helm-kythe-mode` is enabled. Kythe `snippet` of the definition will be displayed in the echo area when `point` is at a reference.
 
 ### Commands
 

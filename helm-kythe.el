@@ -3,7 +3,7 @@
 ;; Copyright (C) 2017 Google Inc.
 
 ;; Author: Fangrui Song <i@maskray.me>
-;; Package-Version: 20170702.1
+;; Package-Version: 20170703.1
 ;; Version: 0.0.1
 ;; URL: https://github.com/MaskRay/emacs-helm-kythe
 ;; Package-Requires: ((emacs "25") (dash "2.12.0") (evil "1.0.0") (helm "2.0"))
@@ -43,7 +43,7 @@
 ;; of mtl if the packages have been unpacked at /tmp/ or some
 ;; directory listed in helm-kythe-file-search-paths.
 ;;
-;; If eldoc-mode is enabled, when the point is at a reference, the `snippet' of its definition will be displayed in minibuffer.
+;; If eldoc-mode is enabled, when the point is at a reference, the `snippet' of its definition will be displayed in the echo area..
 
 ;;; Code:
 
@@ -322,14 +322,13 @@ The first function returns a non-nil value will be used.
                (funcall open-func filename)
                (cl-return t)))))
 
-(defun helm-kythe--fontify-haskell (line)
-  "Fontify a line that will be displayed in minibuffer"
-  (with-temp-buffer
-    (when (fboundp 'haskell-mode)
+(defmacro helm-kythe--fontify (mode line)
+  (let ((mode-hook (intern (format "%S-hook" mode))))
+    `(with-temp-buffer
       (let ((flycheck-checkers nil)
-            (haskell-mode-hook nil))
-        (haskell-mode))
-      (insert line)
+            (,mode-hook nil))
+        (,mode))
+      (insert ,line)
       (font-lock-ensure)
       (buffer-string))))
 
@@ -537,9 +536,13 @@ a/b.cc => $search_path/a/b.cc"
                 (when-let (defs (helm-kythe-get-definitions ticket))
                   (puthash ticket (alist-get 'snippet (car defs)) helm-kythe--eldoc-cache)))]
       (when doc
-        (if (eq major-mode 'haskell-mode)
-            (helm-kythe--fontify-haskell doc)
-          doc)))))
+        (pcase major-mode
+          ((or 'c-mode 'c++-mode) (helm-kythe--fontify c++-mode doc))
+          ('go-mode (helm-kythe--fontify go-mode doc))
+          ('haskell-mode (helm-kythe--fontify haskell-mode doc))
+          ('java-mode (helm-kythe--fontify java-mode doc))
+          ('python-mode (helm-kythe--fontify python-mode doc))
+          (_ doc))))))
 
 (defun helm-kythe-find-definitions ()
   (interactive)
