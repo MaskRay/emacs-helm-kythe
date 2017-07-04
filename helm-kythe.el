@@ -118,11 +118,11 @@ The first function returns a non-nil value will be used.
   "Face for mode line when Kythe is active.")
 
 (defface helm-kythe-column
-  '((t :inherit font-lock-doc-face))
+  '((t :inherit font-lock-constant-face))
   "Face for column numbers.")
 
 (defface helm-kythe-file
-  '((t :inherit font-lock-keyword-face))
+  '((t :inherit font-lock-string-face))
   "Face for filenames in the error list.")
 
 (defface helm-kythe-inactive
@@ -130,7 +130,7 @@ The first function returns a non-nil value will be used.
   "Face for mode line when Kythe is inactive.")
 
 (defface helm-kythe-line
-  '((t :inherit font-lock-doc-face))
+  '((t :inherit font-lock-constant-face))
   "Face for line numbers.")
 
 (defface helm-kythe-match
@@ -183,17 +183,16 @@ The first function returns a non-nil value will be used.
   "Non-nil if decorations have been applied.")
 
 (defconst helm-kythe--buffer "*helm helm-kythe*")
-;; (defconst helm-kythe--anchor-regex "\\`\\([^:]+\\):\\([^:]+\\):\\([^:]+\\):\\(.*\\)")
-(defconst helm-kythe--ticket-anchor-regex "\\`\\([^\0]+\\)\0\\([^:]+\\):\\([^:]+\\):\\([^:]+\\):\\(.*\\)")
+(defconst helm-kythe--ticket-anchor-regex "\\`\\([^\0]+\\)\0\\([^\0]+\\)\0\\([^:]+\\):\\([^:]+\\):\\([^:]+\\):\\(.*\\)")
 
 (define-error 'helm-kythe-error "helm-kythe error")
 
 (defun helm-kythe--action-openfile (candidate)
   (when (string-match helm-kythe--ticket-anchor-regex candidate)
     (let* ((ticket (match-string-no-properties 1 candidate))
-          (path (match-string-no-properties 2 candidate))
-          (line (string-to-number (match-string-no-properties 3 candidate)))
-          (column (string-to-number (match-string-no-properties 4 candidate)))
+          (path (match-string-no-properties 3 candidate))
+          (line (string-to-number (match-string-no-properties 4 candidate)))
+          (column (string-to-number (match-string-no-properties 5 candidate)))
           (old-buffer (current-buffer))
           (old-pos (point))
           (do-found (lambda ()
@@ -250,8 +249,9 @@ The first function returns a non-nil value will be used.
 
 (defun helm-kythe--anchor-to-candidate (anchor)
   "Convert a Kythe anchor to Helm candidates. The first field is an invisible field containing its ticket."
-  (format "%s\0%s:%d:%d:%s"
+  (format "%s\0%s\0%s:%d:%d:%s"
           (alist-get 'ticket anchor)
+          (alist-get 'text anchor)
           (helm-kythe--path-from-ticket (alist-get 'parent anchor))
           (alist-get 'line_number (alist-get 'start anchor))
           (or (alist-get 'column_offset (alist-get 'start anchor)) 0)  ;; TODO Cabal cpu: 'start' of definition_locations of getSystemArch = X86_64 does not have column_offset
@@ -289,15 +289,23 @@ The first function returns a non-nil value will be used.
     p))
 
 (defun helm-kythe--candidate-transformer (candidate)
-  (let* ((e-nul (string-match "\0" candidate))
-         (e-path (string-match ":" candidate (1+ e-nul)))
+  (let* ((e-ticket (string-match "\0" candidate))
+         (e-text (string-match "\0" candidate (1+ e-ticket)))
+         (e-path (string-match ":" candidate (1+ e-text)))
          (e-line (string-match ":" candidate (1+ e-path)))
          (e-column (string-match ":" candidate (1+ e-line))))
-    (put-text-property 0 (1+ e-nul) 'invisible t candidate)
+    (put-text-property 0 (1+ e-text) 'invisible t candidate)
     (when helm-kythe-highlight-candidate
-      (put-text-property (1+ e-nul) e-path 'face 'helm-kythe-file candidate)
+      (put-text-property (1+ e-text) e-path 'face 'helm-kythe-file candidate)
       (put-text-property (1+ e-path) e-line 'face 'helm-kythe-line candidate)
-      (put-text-property (1+ e-line) e-column 'face 'helm-kythe-column candidate))
+      (put-text-property (1+ e-line) e-column 'face 'helm-kythe-column candidate)
+      (let ((i (1+ e-column))
+            (len (- e-text e-ticket 1))
+            (text (regexp-quote (substring-no-properties candidate (1+ e-ticket) e-text))))
+        (while (setq i (string-match text candidate i))
+          (put-text-property i (+ i len) 'face 'helm-match candidate)
+         (cl-incf i len)))
+      )
     candidate))
 
 (defun helm-kythe--char-offsets (object start-key end-key)
