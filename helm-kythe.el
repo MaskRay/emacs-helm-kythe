@@ -268,7 +268,7 @@ The first function returns a non-nil value will be used.
 "
   (when (eq major-mode 'haskell-mode)
     (require 'inf-haskell)  ;; for inferior-haskell-find-project-root
-    (when-let (root (helm-kythe--haskell-find-project-root))
+    (when-let (root (helm-kythe--haskell-find-project-root filename))
       (concat (file-name-nondirectory root) "/" (file-relative-name filename root)))))
 
 (defun helm-kythe--filename-to-path-search-path (filename)
@@ -276,13 +276,10 @@ The first function returns a non-nil value will be used.
            (when-let (path (file-relative-name filename search-path))
              (cl-return path))))
 
-(defun helm-kythe--haskell-find-project-root ()
-  "Find the Haskell project root."
-  (require 'inf-haskell)  ;; for inferior-haskell-find-project-root
-  (let ((p (inferior-haskell-find-project-root (current-buffer))))
-    (while (not (string-match-p ".-[0-9]" (file-name-nondirectory p)))
-      (setq p (directory-file-name (file-name-directory p))))
-    p))
+(defun helm-kythe--haskell-find-project-root (filename)
+  ;; TODO /tmp/lens-4.15.1/src => /tmp/lens-4.15.1
+  (when (string-match "^\\(.+-[0-9][^/]+\\)/" filename)
+    (match-string 1 filename)))
 
 (defun helm-kythe--candidate-transformer (candidate)
   (let* ((e-ticket (string-match "\0" candidate))
@@ -349,7 +346,7 @@ The first function returns a non-nil value will be used.
   "Find filename given Kythe path and ticket.
 mtl-2.2.1/Control/Monad/Cont/Class.hs => $hackage-root/../mtl-2.2.1/Control/Monad/Cont/Class.hs"
   (-if-let* ((_ (eq major-mode 'haskell-mode))
-             (root (helm-kythe--haskell-find-project-root))
+             (root (helm-kythe--haskell-find-project-root (buffer-file-name)))
              (f (concat (file-name-directory root) path))
              (_ (file-exists-p f)))
       f))
