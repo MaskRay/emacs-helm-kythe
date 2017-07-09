@@ -8,8 +8,8 @@
 
 * `emacs >= 25`
 * `dash >= 2.12.0`
-* `evil >= 1.0`, for jump list
 * `helm >= 2.0`
+* Optional: `evil-jumps`, for jump list
 
 ## Usage
 
@@ -61,9 +61,11 @@ If `helm-kythe-prefix-key` (default: `(kbd "C-c k")`) is not empty, it will be b
 (custom-set-variables
  ;; helm-kythe.el talks to /opt/kythe/tools/http_server . This is where http_server listens to.
  '(helm-kythe-http-server-url "http://127.0.0.1:8080")
- ;; If the jump site (`kythe://?path=a/b/c.hs`) cannot be find relative to current project, try `/tmp/haskell-package-root/a/b/c.hs`.
- '(helm-kythe-file-search-paths '("/tmp/haskell-package-root"))
- )
+ ;; If the jump site (`kythe://?path=a/b/c.hs`) cannot be found relative to current project, try `/tmp/haskell-root/a/b/c.hs`.
+ ;; For `kythe://corpus-c?root=root-c?path=a.c`), try `/tmp/c-root/a.c`.
+ '(helm-kythe-filesystem-path-to-corpus-root
+   '(("/tmp/haskell-root" "" "")
+     ("/tmp/c-root" "corpus-c" "root-c"))))
 ```
 
 ![](images/helm-kythe-haskell.gif)

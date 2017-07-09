@@ -3,10 +3,10 @@
 ;; Copyright (C) 2017 Google Inc.
 
 ;; Author: Fangrui Song <i@maskray.me>
-;; Package-Version: 20170704.1
+;; Package-Version: 20170708.1
 ;; Version: 0.0.1
 ;; URL: https://github.com/MaskRay/emacs-helm-kythe
-;; Package-Requires: ((emacs "25") (dash "2.12.0") (evil "1.0.0") (helm "2.0"))
+;; Package-Requires: ((emacs "25") (dash "2.12.0") (helm "2.0"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -34,22 +34,13 @@
 ;; For Haskell:
 ;; (add-hook 'haskell-mode-hook 'helm-kythe-mode)
 ;;
-;; % haskell-indexer/build-stach.sh /tmp/logs mtl
-;; % haskell-indexer/serve.sh /tmp/logs
-;; % emacs /tmp/mtl-2.2.1/Control/Monad/Cont/Class.hs
-;;
-;; Suppose mtl-2.2.1 is the version that is indexed.
-;; helm-kythe-find-definitions/references can jump to xrefs that are outside
-;; of mtl if the packages have been unpacked at /tmp/ or some
-;; directory listed in helm-kythe-file-search-paths.
-;;
 ;; If eldoc-mode is enabled, when the point is at a reference, the `snippet' of its definition will be displayed in the echo area..
 
 ;;; Code:
 
 (require 'cl-lib)
 (require 'dash)
-(require 'evil-jumps)
+(require 'evil-jumps nil t)
 (require 'easymenu)
 (require 'helm)
 (require 'json)
@@ -81,26 +72,30 @@
   :group 'helm-kythe
   :type 'string)
 
-(defcustom helm-kythe-file-search-paths nil
-  "A list of search paths for converting Kythe paths to filenames, which is used by `helm-kythe--path-to-filename-search-path'."
+(defcustom helm-kythe-filesystem-path-to-corpus-root nil
+  "A list of `(filesystem-path-prefix corpus root)' for converting between filenames `(filesystem-path-prefix/path)' and Kythe `(corpus, root, path)' tuples, which is used by `helm-kythe--filename-to-triple-search-path' and `helm-kythe-triple-to-filename-search-path'."
   :group 'helm-kythe
-  :type '(list string))
+  :type '(list (list string)))
 
-(defcustom helm-kythe-filename-to-path-functions '(helm-kythe--filename-to-path-hackage helm-kythe--filename-to-path-search-path)
-  "A list of functions for finding corresponding Kythe path given filename.
-The first function (applied to `(buffer-file-name)') returns a non-nil value will be used.
+(defcustom helm-kythe-filename-to-triple-functions '(helm-kythe--filename-to-triple-hackage helm-kythe--filename-to-triple-search-path)
+  "A list of functions for finding corresponding Kythe triple given filename.
+The first function (applied to `(buffer-file-name)') returns a non-nil value
+will be used. This is used to apply decorations for current file.
+
+Example:
   (defun foo (filename)
-    \"kythe:?path=a/b/c.hs\")
-"
+    (list \"corpus\" \"root\" \"a/b/c.hs\"))"
   :group 'helm-kythe
   :type '(repeat function))
 
-(defcustom helm-kythe-path-to-filename-functions '(helm-kythe--path-to-filename-hackage helm-kythe--path-to-filename-search-path)
-  "A list of functions for finding filenames given Kythe path and ticket.
-The first function returns a non-nil value will be used.
-  (defun foo (path &optional ticket)
-    \"/tmp/a/b/c.hs\")
-"
+(defcustom helm-kythe-triple-to-filename-functions '(helm-kythe--triple-to-filename-hackage helm-kythe--triple-to-filename-search-path)
+  "A list of functions for finding filenames given Kythe triple and ticket.
+The first function returns a non-nil value will be used. This is used to map a
+cross reference to a local file.
+
+Example:
+ (defun foo (triple &optional ticket)
+   \"/tmp/a/b/c.hs\")"
   :group 'helm-kythe
   :type '(repeat function))
 
@@ -186,24 +181,25 @@ The first function returns a non-nil value will be used.
 (defun helm-kythe--action-openfile (candidate)
   (when (string-match helm-kythe--ticket-anchor-regex candidate)
     (let* ((ticket (match-string-no-properties 1 candidate))
-          (path (match-string-no-properties 3 candidate))
-          (line (string-to-number (match-string-no-properties 4 candidate)))
-          (column (string-to-number (match-string-no-properties 5 candidate)))
-          (old-buffer (current-buffer))
-          (old-pos (point))
-          (do-found (lambda ()
-                      ;; Push old position to the jump list.
-                      (with-current-buffer old-buffer
-                        (save-excursion
-                          (goto-char old-pos)
-                          (helm-kythe--with-evil-jumps (evil-set-jump))))
-                      (pcase helm-kythe-recenter
-                        ('always (recenter))
-                        ('never)
-                        ('non-local
-                         (unless (eq (current-buffer) old-buffer)
-                           (recenter)))))))
-      (when (helm-kythe--find-file path ticket)
+           (path (match-string-no-properties 3 candidate))
+           (line (string-to-number (match-string-no-properties 4 candidate)))
+           (column (string-to-number (match-string-no-properties 5 candidate)))
+           (old-buffer (current-buffer))
+           (old-pos (point))
+           (do-found (lambda ()
+                       ;; Push old position to the jump list.
+                       (with-current-buffer old-buffer
+                         (save-excursion
+                           (goto-char old-pos)
+                           (if (featurep 'evil-jumps)
+                               (helm-kythe--with-evil-jumps (evil-set-jump)))))
+                       (pcase helm-kythe-recenter
+                         ('always (recenter))
+                         ('never)
+                         ('non-local
+                          (unless (eq (current-buffer) old-buffer)
+                            (recenter)))))))
+      (when (helm-kythe--find-file ticket)
         (goto-char (point-min))
         (forward-line (1- line))
         (forward-char column)
@@ -233,13 +229,13 @@ The first function returns a non-nil value will be used.
 
 (defun helm-kythe--anchor-keep-one-per-line (anchors)
   "If there are more than one Kythe anchors in one line, keep the first and discard the rest."
-  (let (ret path1 line1)
+  (let (ret triple1 line1)
     (dolist (anchor anchors)
-      (let ((path (helm-kythe--path-from-ticket (alist-get 'parent anchor)))
+      (let ((triple (helm-kythe--ticket-to-triple (alist-get 'parent anchor)))
             (line (alist-get 'line_number (alist-get 'start anchor))))
-        (unless (and path1 (string= path path1) (= line line1))
+        (unless (and line1 (= line line1) (equal triple triple1))
           (!cons anchor ret))
-        (setq path1 path)
+        (setq triple1 triple)
         (setq line1 line)))
     (nreverse ret)))
 
@@ -248,7 +244,7 @@ The first function returns a non-nil value will be used.
   (format "%s\0%s\0%s:%d:%d:%s"
           (alist-get 'ticket anchor)
           (alist-get 'text anchor)
-          (helm-kythe--path-from-ticket (alist-get 'parent anchor))
+          (caddr (helm-kythe--ticket-to-triple (alist-get 'parent anchor)))
           (alist-get 'line_number (alist-get 'start anchor))
           (or (alist-get 'column_offset (alist-get 'start anchor)) 0)  ;; TODO Cabal cpu: 'start' of definition_locations of getSystemArch = X86_64 does not have column_offset
           (alist-get 'snippet anchor)))
@@ -262,19 +258,18 @@ The first function returns a non-nil value will be used.
 (defun helm-kythe--definition-at-point ()
   (-some->> (get-text-property (point) 'helm-kythe-definition) (alist-get 'ticket)))
 
-(defun helm-kythe--filename-to-path-hackage (filename)
-  "Find the Haskell project root.
-/tmp/mtl-2.2.1/Control/Monad/Cont/Class.hs => mtl-2.2.1/Control/Monad/Cont/Class.hs
-"
+(defun helm-kythe--filename-to-triple-hackage (filename)
+  "Convert a filename in a Haskell package to `(corpus root path)'.
+/tmp/mtl-2.2.1/Control/Monad/Cont/Class.hs => (\"\" \"\" mtl-2.2.1/Control/Monad/Cont/Class.hs)"
   (when (eq major-mode 'haskell-mode)
     (require 'inf-haskell)  ;; for inferior-haskell-find-project-root
     (when-let (root (helm-kythe--haskell-find-project-root filename))
-      (concat (file-name-nondirectory root) "/" (file-relative-name filename root)))))
+      (list "" "" (concat (file-name-nondirectory root) "/" (file-relative-name filename root))))))
 
-(defun helm-kythe--filename-to-path-search-path (filename)
-  (cl-loop for search-path in helm-kythe-file-search-paths do
-           (when-let (path (file-relative-name filename search-path))
-             (cl-return path))))
+(defun helm-kythe--filename-to-triple-search-path (filename)
+  (cl-loop for (prefix corpus root) in helm-kythe-filesystem-path-to-corpus-root do
+           (when-let (path (file-relative-name filename prefix))
+             (cl-return (list corpus root path)))))
 
 (defun helm-kythe--haskell-find-project-root (filename)
   ;; TODO /tmp/lens-4.15.1/src => /tmp/lens-4.15.1
@@ -294,11 +289,11 @@ The first function returns a non-nil value will be used.
       (put-text-property (1+ e-line) e-column 'face 'helm-kythe-column candidate)
       (let ((i (1+ e-column))
             (len (- e-text e-ticket 1))
-            (text (regexp-quote (substring-no-properties candidate (1+ e-ticket) e-text))))
-        (while (setq i (string-match text candidate i))
+            ;; imprecise but useful
+            (needle (concat "\\b" (regexp-quote (substring-no-properties candidate (1+ e-ticket) e-text)) "\\b")))
+        (while (setq i (string-match needle candidate i))
           (put-text-property i (+ i len) 'face 'helm-match candidate)
-         (cl-incf i len)))
-      )
+         (cl-incf i len))))
     candidate))
 
 (defun helm-kythe--char-offsets (object start-key end-key)
@@ -316,14 +311,17 @@ The first function returns a non-nil value will be used.
         (helm :sources srcs :buffer helm-kythe--buffer :preselect (concat "^" (regexp-quote caller-ticket)))
       (helm :sources srcs :buffer helm-kythe--buffer))))
 
-(defun helm-kythe--find-file (path ticket)
-  (-let [open-func (if helm-kythe--use-otherwin #'find-file-other-window #'find-file)]
-    (cl-loop for func in helm-kythe-path-to-filename-functions do
-             (when-let (filename (funcall func path ticket))
+(defun helm-kythe--find-file (ticket)
+  "Switch to a buffer visiting the file which is mapped to the Kythe ticket."
+  (let ((triple (helm-kythe--ticket-to-triple ticket))
+        (open-func (if helm-kythe--use-otherwin #'find-file-other-window #'find-file)))
+    (cl-loop for func in helm-kythe-triple-to-filename-functions do
+             (when-let (filename (funcall func triple ticket))
                (funcall open-func filename)
                (cl-return t)))))
 
 (defmacro helm-kythe--fontify (mode line)
+  "Fontify a Kythe snippet which will be displayed in echo area."
   (let ((mode-hook (intern (format "%S-hook" mode))))
     `(with-temp-buffer
       (let ((flycheck-checkers nil)
@@ -339,26 +337,35 @@ The first function returns a non-nil value will be used.
       " Kythe"
     (propertize " Kythe" 'face 'helm-kythe-inactive)))
 
-(defun helm-kythe--path-from-ticket (ticket)
-  (when-let (i (string-match "path=\\([^#]+\\)" ticket)) (match-string 1 ticket)))
+(defun helm-kythe--ticket-to-triple (ticket)
+  "Convert a Kythe ticket to a `(corpus root path)' triple.
+kythe://corpus?lang=java?root=a?path=b.c => (\"corpus\" \"a\" \"b.c\")"
+  (when-let (i (string-match "?path=\\([^#?]+\\)" ticket))
+    (let ((corpus "") (root "") (path (match-string 1 ticket)))
+      (when (string-match "//\\([^#?]+\\)" ticket)
+        (setq corpus (match-string 1 ticket)))
+      (when (string-match "?root=\\([^?]+\\)" ticket)
+        (setq root (match-string 1 ticket)))
+      (list corpus root path))))
 
-(defun helm-kythe--path-to-filename-hackage (path ticket)
-  "Find filename given Kythe path and ticket.
-mtl-2.2.1/Control/Monad/Cont/Class.hs => $hackage-root/../mtl-2.2.1/Control/Monad/Cont/Class.hs"
+(defun helm-kythe--triple-to-filename-hackage (triple ticket)
+  "Find filename given Kythe triple and ticket.
+(\"\" \"\" mtl-2.2.1/Control/Monad/Cont/Class.hs) => $hackage-root/../mtl-2.2.1/Control/Monad/Cont/Class.hs"
   (-if-let* ((_ (eq major-mode 'haskell-mode))
              (root (helm-kythe--haskell-find-project-root (buffer-file-name)))
-             (f (concat (file-name-directory root) path))
+             (f (concat (file-name-directory root) (caddr triple)))
              (_ (file-exists-p f)))
       f))
 
-(defun helm-kythe--path-to-filename-search-path (path ticket)
-  "Find filename given Kythe path and ticket.
-/absolute/file => /absolute/file
-a/b.cc => $search_path/a/b.cc"
+(defun helm-kythe--triple-to-filename-search-path (path ticket)
+  "Find filename given Kythe triple and ticket.
+(\"\" \"\" /absolute/file) => /absolute/file
+(\"\" \"\" a/b.cc) => $search_path/a/b.cc"
   (if (file-name-absolute-p path)
       (when (file-exists-p path) path)
-    (cl-loop for search-path in helm-kythe-file-search-paths do
-             (-if-let* ((f (concat (file-name-as-directory search-path) path))
+    (cl-loop for (prefix corpus root) in helm-kythe-filesystem-path-to-corpus-root do
+             (-if-let* ((_ (and (equal corpus (car ticket)) (equal root (cadr ticket))))
+                        (f (concat (file-name-as-directory prefix) path))
                         (_ (file-exists-p f)))
                  (cl-return f)))))
 
@@ -472,10 +479,10 @@ a/b.cc => $search_path/a/b.cc"
   (interactive)
   (helm-kythe-remove-decorations)
   (with-silent-modifications
-    (cl-loop for func in helm-kythe-filename-to-path-functions do
-             (when-let (path (funcall func (buffer-file-name)))
+    (cl-loop for func in helm-kythe-filename-to-triple-functions do
+             (when-let (triple (funcall func (buffer-file-name)))
                (condition-case ex
-                   (helm-kythe-decorations path)
+                   (helm-kythe-decorations triple)
                  (helm-kythe-error
                   (when (called-interactively-p 'any)
                     (error "helm-kythe-apply-decorations: %s" (cdr ex)))))
@@ -513,24 +520,25 @@ a/b.cc => $search_path/a/b.cc"
 (define-key helm-kythe--mouse-map-definition [mouse-1] (lambda () (interactive) (set-mark nil) (helm-kythe-find-definitions)))
 (define-key helm-kythe--mouse-map-reference [mouse-1] (lambda () (interactive) (set-mark nil) (helm-kythe-find-references)))
 
-(defun helm-kythe-decorations (filepath)
-  (when-let (refs (helm-kythe-post-decorations (concat "kythe://?path=" filepath)))
-    (mapc (lambda (ref)
-            (-let [(start . end) (helm-kythe--char-offsets ref 'anchor_start 'anchor_end)]
-              (when end
-                (add-text-properties start end `(helm-kythe-reference ,ref keymap ,helm-kythe--mouse-map-definition mouse-face highlight))
-                )))
-          (alist-get 'reference refs))
-    (mapc (lambda (ticket-def)
-            (-let [def (cdr ticket-def)]
-              ;; cxx_extractor or cxx_indexer, "definition_locations" of a.cc may include tickets of "stdio.h"
-              (when (equal filepath (helm-kythe--path-from-ticket (alist-get 'ticket def)))
-                (-let [(start . end) (helm-kythe--char-offsets def 'start 'end)]
-                  (when end
-                    (add-text-properties start end `(helm-kythe-definition ,def keymap ,helm-kythe--mouse-map-reference mouse-face highlight)))))))
-          (alist-get 'definition_locations refs))
-    (setq-local helm-kythe-decorated t)
-    nil))
+(defun helm-kythe-decorations (triple)
+  (-let (((corpus root path) triple))
+    (when-let (refs (helm-kythe-post-decorations (format "kythe://%s%s?path=%s" corpus (if (string-empty-p root) "" (concat "?root=" root)) path)))
+      (mapc (lambda (ref)
+              (-let [(start . end) (helm-kythe--char-offsets ref 'anchor_start 'anchor_end)]
+                (when end
+                  (add-text-properties start end `(helm-kythe-reference ,ref keymap ,helm-kythe--mouse-map-definition mouse-face highlight))
+                  )))
+            (alist-get 'reference refs))
+      (mapc (lambda (ticket-def)
+              (-let [def (cdr ticket-def)]
+                ;; cxx_extractor or cxx_indexer, "definition_locations" of a.cc may include tickets of "stdio.h"
+                (when (equal triple (helm-kythe--ticket-to-triple (alist-get 'ticket def)))
+                  (-let [(start . end) (helm-kythe--char-offsets def 'start 'end)]
+                    (when end
+                      (add-text-properties start end `(helm-kythe-definition ,def keymap ,helm-kythe--mouse-map-reference mouse-face highlight)))))))
+            (alist-get 'definition_locations refs))
+      (setq-local helm-kythe-decorated t)
+      nil)))
 
 (defun helm-kythe-dwim ()
   (interactive)
@@ -583,13 +591,21 @@ a/b.cc => $search_path/a/b.cc"
   (interactive)
   (helm-kythe--common '(helm-kythe-source-references-prompt)))
 
-(evil-define-motion helm-kythe-jump-backward (count)
-  (helm-kythe--with-evil-jumps
-      (evil--jump-backward count)))
+(if (featurep 'evil-jumps)
+    (progn
+      (evil-define-motion helm-kythe-jump-backward (count)
+        (helm-kythe--with-evil-jumps
+            (evil--jump-backward count)))
 
-(evil-define-motion helm-kythe-jump-forward (count)
-  (helm-kythe--with-evil-jumps
-      (evil--jump-forward count)))
+      (evil-define-motion helm-kythe-jump-forward (count)
+        (helm-kythe--with-evil-jumps
+            (evil--jump-forward count))))
+
+  (defun helm-kythe-jump-backward (count)
+    (error "Install `evil-jumps' to enable this feature"))
+
+  (defun helm-kythe-jump-forward (count)
+    (error "Install `evil-jumps' to enable this feature")))
 
 (defun helm-kythe-imenu ()
   (interactive)
@@ -605,7 +621,7 @@ a/b.cc => $search_path/a/b.cc"
   "Resume a previous `helm-kythe` session."
   (interactive)
   (unless (get-buffer helm-kythe--buffer)
-    (error "Error: helm-kythe buffer does not exist."))
+    (error "Error: helm-kythe buffer does not exist"))
   (helm-resume helm-kythe--buffer))
 
 (defvar helm-kythe-map (make-sparse-keymap))
